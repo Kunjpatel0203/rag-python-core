@@ -1,0 +1,15 @@
+langchain
+langchain-community
+langchain-openai
+faiss-cpu
+beautifulsoup4
+requests
+unstructured
+pypdf
+python-docx
+openpyxl
+python-pptx
+tiktoken
+openai
+langchain-text-splitters
+python-dotenv
