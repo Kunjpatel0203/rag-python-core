@@ -414,25 +414,489 @@
 
 
 
+#######################################. eventfallback 
+# import os
+# from collections import OrderedDict
+# from typing import List
+
+# from vectorstore.faiss_store import create_vector_store, load_vector_store
+# from processing.embedder import get_embedder
+# from rag.prompt import build_prompt
+
+
+# BASE_CHUNK_DIR = "data/chunks"
+# BASE_EMBED_DIR = "data/embeddings"
+
+
+# # ---------------------------------------------------------
+# # INGESTION (UNCHANGED BEHAVIOR – SAFE)
+# # ---------------------------------------------------------
+# def ingest_blocks(blocks, compliance_id):
+#     embed_path = f"{BASE_EMBED_DIR}/compliance_{compliance_id}"
+
+#     if os.path.exists(f"{embed_path}/index.faiss"):
+#         print("✔ Loading existing embeddings (no OpenAI cost)")
+#         return load_vector_store(embed_path)
+
+#     print("⏳ Creating embeddings...")
+
+#     all_chunks = []
+#     all_metadata = []
+
+#     for block in blocks:
+#         if not block["type"]:
+#             continue
+
+#         block_type = block["type"].upper()
+#         block_id = block["block_id"]
+
+#         # Structured files are handled elsewhere
+#         if block_type in ["XLS", "CSV", "GSHEET"]:
+#             continue
+
+#         text = block.get("extracted_text", "")
+#         chunks = block.get("chunks", [])
+
+#         for c in chunks:
+#             all_chunks.append(c)
+#             all_metadata.append({
+#                 "compliance_id": compliance_id,
+#                 "block_id": block_id,
+#                 "source": block.get("value")
+#             })
+
+#     if not all_chunks:
+#         return None
+
+#     embedder = get_embedder()
+#     store = create_vector_store(all_chunks, all_metadata, embedder)
+
+#     os.makedirs(embed_path, exist_ok=True)
+#     store.save_local(embed_path)
+
+#     print("✅ Embeddings saved locally")
+#     return store
+
+
+# # ---------------------------------------------------------
+# # 🔥 SEMANTIC + CONFIDENCE-AWARE QUERYING
+# # ---------------------------------------------------------
+# def query_blocks(store, question: str, compliance_id: str) -> str:
+#     """
+#     Semantic RAG with:
+#     - closest-information fallback
+#     - list completeness
+#     - confidence awareness
+#     - no duplicate answers
+#     """
+
+#     if store is None:
+#         return "No unstructured documents available."
+
+#     # 🔹 1. SEMANTIC SEARCH (NOT KEYWORD MATCH)
+#     docs = store.similarity_search(
+#         question,
+#         k=8,
+#         filter={"compliance_id": compliance_id}
+#     )
+
+#     if not docs:
+#         return "Not found in provided documents."
+
+#     # 🔹 2. MERGE + CLEAN CONTEXT
+#     context_chunks = []
+#     seen = set()
+
+#     for d in docs:
+#         text = d.page_content.strip()
+#         if text and text not in seen:
+#             seen.add(text)
+#             context_chunks.append(text)
+
+#     context = "\n".join(context_chunks)
+
+#     # 🔹 3. CONFIDENCE HEURISTIC
+#     # If keywords overlap but exact phrasing differs → closest answer mode
+#     q_tokens = set(question.lower().split())
+#     ctx_tokens = set(context.lower().split())
+
+#     overlap_ratio = len(q_tokens & ctx_tokens) / max(len(q_tokens), 1)
+
+#     # Thresholds chosen conservatively
+#     if overlap_ratio < 0.08:
+#         return "Not found in provided documents."
+
+#     # 🔹 4. PROMPT-BASED SYNTHESIS (STRICT BUT HELPFUL)
+#     prompt = build_prompt(context, question)
+
+#     llm = get_llm()
+#     answer = llm.invoke(prompt).content.strip()
+
+#     # 🔹 5. FINAL SAFETY NET
+#     if not answer or answer.lower().startswith("not found"):
+#         return (
+#             "The exact information is not explicitly mentioned in the documents. "
+#             "However, closely related information is available:\n\n"
+#             + context_chunks[0]
+#         )
+
+#     return answer
+
+
+# # ---------------------------------------------------------
+# # LAZY IMPORT (avoids circular import issues)
+# # ---------------------------------------------------------
+# def get_llm():
+#     from processing.llm import get_llm as _get_llm
+#     return _get_llm()
+
+
+
+
+
+
+
+
+#.  pretty close version but no chunk saved 
+# import os
+# from typing import List
+
+# from extractors.universal_extractor import extract_text
+# from processing.chunker import chunk_text
+# from vectorstore.faiss_store import create_vector_store, load_vector_store
+# from processing.embedder import get_embedder
+# from rag.prompt import build_prompt
+
+
+
+# BASE_EMBED_DIR = "data/embeddings"
+
+
+# # =====================================================
+# # INGESTION (UNCHANGED – SAFE)
+# # =====================================================
+# def ingest_blocks(blocks, compliance_id):
+#     embed_path = f"{BASE_EMBED_DIR}/compliance_{compliance_id}"
+
+#     if os.path.exists(f"{embed_path}/index.faiss"):
+#         print("✔ Loading existing embeddings (no OpenAI cost)")
+#         return load_vector_store(embed_path)
+
+#     print("⏳ Creating embeddings...")
+
+#     all_chunks = []
+#     all_metadata = []
+
+#     for block in blocks:
+#         if not block.get("type"):
+#             continue
+
+#         block_type = block["type"].upper()
+#         source = block["value"]
+
+#         # 🚫 Skip structured here
+#         if block_type in ["XLS", "CSV", "GSHEET"]:
+#             continue
+
+#         # ✅ EXTRACT TEXT
+#         try:
+#             text = extract_text(source)
+#         except Exception as e:
+#             print(f"⚠ Failed to extract {source}: {e}")
+#             continue
+
+#         if not text.strip():
+#             continue
+
+#         # ✅ CHUNK TEXT
+#         chunks = chunk_text(text)
+
+#         for c in chunks:
+#             all_chunks.append(c)
+#             all_metadata.append({
+#                 "compliance_id": compliance_id,
+#                 "source": source
+#             })
+
+#     if not all_chunks:
+#         print("ℹ No unstructured documents found.")
+#         return None
+
+#     store = create_vector_store(
+#         all_chunks,
+#         all_metadata,
+#         get_embedder()
+#     )
+
+#     os.makedirs(embed_path, exist_ok=True)
+#     store.save_local(embed_path)
+
+#     print("✅ Embeddings saved locally")
+#     return store
+
+
+# # =====================================================
+# # 🔥 SEMANTIC + CONFIDENCE-AWARE RAG
+# # =====================================================
+# def query_blocks(store, question: str, compliance_id: str) -> str:
+#     """
+#     Robust semantic RAG with:
+#     - semantic similarity (not keyword)
+#     - closest-information fallback
+#     - controlled output size
+#     - no hallucination
+#     """
+
+#     if store is None:
+#         return "No unstructured documents available."
+
+#     # 1️⃣ Semantic retrieval
+#     docs = store.similarity_search(
+#         question,
+#         k=8,
+#         filter={"compliance_id": compliance_id}
+#     )
+
+#     if not docs:
+#         return "Not found in provided documents."
+
+#     # 2️⃣ Deduplicate + keep only most relevant text
+#     seen = set()
+#     context_chunks: List[str] = []
+
+#     for d in docs:
+#         text = d.page_content.strip()
+#         if text and text not in seen:
+#             seen.add(text)
+#             context_chunks.append(text)
+#         if len(context_chunks) == 4:  # hard limit
+#             break
+
+#     context = "\n".join(context_chunks)
+
+#     # 3️⃣ Confidence heuristic (semantic overlap)
+#     q_tokens = set(question.lower().split())
+#     ctx_tokens = set(context.lower().split())
+
+#     overlap = len(q_tokens & ctx_tokens) / max(len(q_tokens), 1)
+
+#     if overlap < 0.07:
+#         return "Not found in provided documents."
+
+#     # 4️⃣ Ask LLM with STRICT rules
+#     llm = _get_llm()
+#     prompt = build_prompt(context, question)
+#     answer = llm.invoke(prompt).content.strip()
+
+#     # 5️⃣ Controlled fallback (closest info only)
+#     if not answer or answer.lower().startswith("not found"):
+#         return (
+#             "The exact information is not explicitly mentioned in the documents. "
+#             "However, closely related information is available:\n\n"
+#             + context_chunks[0]
+#         )
+
+#     return answer
+
+
+# # =====================================================
+# # Lazy import (prevents circular imports)
+# # =====================================================
+# def _get_llm():
+#     from processing.llm import get_llm
+#     return get_llm()
+
+
+
+
+
+
+
+
+
+
+#chunks saved 
+# import os
+# from typing import List
+
+# from extractors.universal_extractor import extract_text
+# from processing.chunker import chunk_text
+# from vectorstore.faiss_store import create_vector_store, load_vector_store
+# from processing.embedder import get_embedder
+# from rag.prompt import build_prompt
+
+
+# BASE_EMBED_DIR = "data/embeddings"
+# BASE_CHUNK_DIR = "data/chunks"
+
+
+# # =====================================================
+# # INGESTION (FIXED – CHUNKS ARE SAVED)
+# # =====================================================
+# def ingest_blocks(blocks, compliance_id):
+#     embed_path = f"{BASE_EMBED_DIR}/compliance_{compliance_id}"
+#     chunk_path = f"{BASE_CHUNK_DIR}/compliance_{compliance_id}"
+
+#     # If embeddings already exist, load them
+#     if os.path.exists(f"{embed_path}/index.faiss"):
+#         print("✔ Loading existing embeddings (no OpenAI cost)")
+#         return load_vector_store(embed_path)
+
+#     print("⏳ Creating embeddings...")
+
+#     os.makedirs(chunk_path, exist_ok=True)
+
+#     all_chunks = []
+#     all_metadata = []
+
+#     for block in blocks:
+#         if not block.get("type"):
+#             continue
+
+#         block_type = block["type"].upper()
+#         source = block["value"]
+
+#         # 🚫 Skip structured files here
+#         if block_type in ["XLS", "CSV", "GSHEET"]:
+#             continue
+
+#         # ✅ Extract text
+#         try:
+#             text = extract_text(source)
+#         except Exception as e:
+#             print(f"⚠ Failed to extract {source}: {e}")
+#             continue
+
+#         if not text.strip():
+#             print(f"⚠ Empty text extracted from {source}")
+#             continue
+
+#         # ✅ Chunk text
+#         chunks = chunk_text(text)
+
+#         if not chunks:
+#             continue
+
+#         # ✅ Save chunks to disk (FOR DEBUGGING & TRACEABILITY)
+#         safe_name = os.path.basename(source).replace("/", "_").replace(" ", "_")
+#         chunk_file = os.path.join(chunk_path, f"{safe_name}.txt")
+
+#         with open(chunk_file, "w", encoding="utf-8") as f:
+#             for i, chunk in enumerate(chunks, start=1):
+#                 f.write(f"[CHUNK {i}]\n")
+#                 f.write(chunk.strip())
+#                 f.write("\n\n" + "=" * 80 + "\n\n")
+
+#         # ✅ Prepare for embeddings
+#         for c in chunks:
+#             all_chunks.append(c)
+#             all_metadata.append({
+#                 "compliance_id": compliance_id,
+#                 "source": source
+#             })
+
+#     if not all_chunks:
+#         print("ℹ No unstructured documents found.")
+#         return None
+
+#     store = create_vector_store(
+#         all_chunks,
+#         all_metadata,
+#         get_embedder()
+#     )
+
+#     os.makedirs(embed_path, exist_ok=True)
+#     store.save_local(embed_path)
+
+#     print("✅ Embeddings saved locally")
+#     print(f"📄 Chunks saved at: {chunk_path}")
+
+#     return store
+
+
+# # =====================================================
+# # SEMANTIC + CONFIDENCE-AWARE RAG (UNCHANGED)
+# # =====================================================
+# def query_blocks(store, question: str, compliance_id: str) -> str:
+#     if store is None:
+#         return "No unstructured documents available."
+
+#     docs = store.similarity_search(
+#         question,
+#         k=8,
+#         filter={"compliance_id": compliance_id}
+#     )
+
+#     if not docs:
+#         return "Not found in provided documents."
+
+#     seen = set()
+#     context_chunks: List[str] = []
+
+#     for d in docs:
+#         text = d.page_content.strip()
+#         if text and text not in seen:
+#             seen.add(text)
+#             context_chunks.append(text)
+#         if len(context_chunks) == 4:
+#             break
+
+#     context = "\n".join(context_chunks)
+
+#     q_tokens = set(question.lower().split())
+#     ctx_tokens = set(context.lower().split())
+#     overlap = len(q_tokens & ctx_tokens) / max(len(q_tokens), 1)
+
+#     if overlap < 0.07:
+#         return "Not found in provided documents."
+
+#     llm = _get_llm()
+#     prompt = build_prompt(context, question)
+#     answer = llm.invoke(prompt).content.strip()
+
+#     if not answer or answer.lower().startswith("not found"):
+#         return (
+#             "The exact information is not explicitly mentioned in the documents. "
+#             "However, closely related information is available:\n\n"
+#             + context_chunks[0]
+#         )
+
+#     return answer
+
+
+# # =====================================================
+# # Lazy import (prevents circular imports)
+# # =====================================================
+# def _get_llm():
+#     from processing.llm import get_llm
+#     return get_llm()
+
+
+
+
+
+
 
 import os
-from collections import OrderedDict
+import re
 from typing import List
 
+from extractors.universal_extractor import extract_text
+from processing.chunker import chunk_text
 from vectorstore.faiss_store import create_vector_store, load_vector_store
 from processing.embedder import get_embedder
 from rag.prompt import build_prompt
 
-
-BASE_CHUNK_DIR = "data/chunks"
 BASE_EMBED_DIR = "data/embeddings"
+BASE_CHUNK_DIR = "data/chunks"
 
 
-# ---------------------------------------------------------
-# INGESTION (UNCHANGED BEHAVIOR – SAFE)
-# ---------------------------------------------------------
+# =====================================================
+# INGESTION (SAFE + TRACEABLE)
+# =====================================================
 def ingest_blocks(blocks, compliance_id):
     embed_path = f"{BASE_EMBED_DIR}/compliance_{compliance_id}"
+    chunk_path = f"{BASE_CHUNK_DIR}/compliance_{compliance_id}"
 
     if os.path.exists(f"{embed_path}/index.faiss"):
         print("✔ Loading existing embeddings (no OpenAI cost)")
@@ -440,71 +904,102 @@ def ingest_blocks(blocks, compliance_id):
 
     print("⏳ Creating embeddings...")
 
+    os.makedirs(chunk_path, exist_ok=True)
+
     all_chunks = []
     all_metadata = []
 
     for block in blocks:
-        if not block["type"]:
+        if not block.get("type"):
             continue
 
         block_type = block["type"].upper()
-        block_id = block["block_id"]
+        source = block["value"]
 
-        # Structured files are handled elsewhere
         if block_type in ["XLS", "CSV", "GSHEET"]:
             continue
 
-        text = block.get("extracted_text", "")
-        chunks = block.get("chunks", [])
+        try:
+            text = extract_text(source)
+        except Exception as e:
+            print(f"⚠ Failed to extract {source}: {e}")
+            continue
+
+        if not text.strip():
+            continue
+
+        chunks = chunk_text(text)
+        if not chunks:
+            continue
+
+        # Save chunks for inspection
+        safe_name = os.path.basename(source).replace(" ", "_")
+        with open(
+            os.path.join(chunk_path, f"{safe_name}.txt"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            for i, c in enumerate(chunks, 1):
+                f.write(f"[CHUNK {i}]\n{c}\n\n{'='*80}\n\n")
 
         for c in chunks:
             all_chunks.append(c)
             all_metadata.append({
                 "compliance_id": compliance_id,
-                "block_id": block_id,
-                "source": block.get("value")
+                "source": source
             })
 
     if not all_chunks:
+        print("ℹ No unstructured documents found.")
         return None
 
-    embedder = get_embedder()
-    store = create_vector_store(all_chunks, all_metadata, embedder)
+    store = create_vector_store(
+        all_chunks,
+        all_metadata,
+        get_embedder()
+    )
 
     os.makedirs(embed_path, exist_ok=True)
     store.save_local(embed_path)
 
     print("✅ Embeddings saved locally")
+    print(f"📄 Chunks saved at: {chunk_path}")
     return store
 
 
-# ---------------------------------------------------------
-# 🔥 SEMANTIC + CONFIDENCE-AWARE QUERYING
-# ---------------------------------------------------------
+# =====================================================
+# 🔥 ENTITY-FIRST SEMANTIC RAG (FIXED)
+# =====================================================
 def query_blocks(store, question: str, compliance_id: str) -> str:
-    """
-    Semantic RAG with:
-    - closest-information fallback
-    - list completeness
-    - confidence awareness
-    - no duplicate answers
-    """
-
     if store is None:
         return "No unstructured documents available."
 
-    # 🔹 1. SEMANTIC SEARCH (NOT KEYWORD MATCH)
+    # 1️⃣ Semantic retrieval
     docs = store.similarity_search(
         question,
-        k=8,
+        k=12,
         filter={"compliance_id": compliance_id}
     )
 
     if not docs:
         return "Not found in provided documents."
 
-    # 🔹 2. MERGE + CLEAN CONTEXT
-    context_chunks = []
+    # 2️⃣ Extract key entities from question
+    entities = _extract_entities(question)
+
+    # 3️⃣ Entity-first filtering
+    entity_matched = []
+    for d in docs:
+        text = d.page_content.lower()
+        if any(e in text for e in entities):
+            entity_matched.append(d)
+
+    # Fallback if entity not explicitly found
+    if entity_matched:
+        docs = entity_matched
+
+    # 4️⃣ Build focused context
+    context_chunks: List[str] = []
     seen = set()
 
     for d in docs:
@@ -512,27 +1007,20 @@ def query_blocks(store, question: str, compliance_id: str) -> str:
         if text and text not in seen:
             seen.add(text)
             context_chunks.append(text)
+        if len(context_chunks) == 3:
+            break
 
-    context = "\n".join(context_chunks)
-
-    # 🔹 3. CONFIDENCE HEURISTIC
-    # If keywords overlap but exact phrasing differs → closest answer mode
-    q_tokens = set(question.lower().split())
-    ctx_tokens = set(context.lower().split())
-
-    overlap_ratio = len(q_tokens & ctx_tokens) / max(len(q_tokens), 1)
-
-    # Thresholds chosen conservatively
-    if overlap_ratio < 0.08:
+    if not context_chunks:
         return "Not found in provided documents."
 
-    # 🔹 4. PROMPT-BASED SYNTHESIS (STRICT BUT HELPFUL)
-    prompt = build_prompt(context, question)
+    context = "\n\n".join(context_chunks)
 
-    llm = get_llm()
+    # 5️⃣ Ask LLM with STRICT prompt
+    llm = _get_llm()
+    prompt = build_prompt(context, question)
     answer = llm.invoke(prompt).content.strip()
 
-    # 🔹 5. FINAL SAFETY NET
+    # 6️⃣ Controlled fallback
     if not answer or answer.lower().startswith("not found"):
         return (
             "The exact information is not explicitly mentioned in the documents. "
@@ -543,9 +1031,27 @@ def query_blocks(store, question: str, compliance_id: str) -> str:
     return answer
 
 
-# ---------------------------------------------------------
-# LAZY IMPORT (avoids circular import issues)
-# ---------------------------------------------------------
-def get_llm():
-    from processing.llm import get_llm as _get_llm
-    return _get_llm()
+# =====================================================
+# UTILITIES
+# =====================================================
+def _extract_entities(question: str) -> List[str]:
+    """
+    Lightweight entity extractor:
+    - Acronyms
+    - Capitalized terms
+    - Keywords longer than 3 chars
+    """
+    q = question.lower()
+
+    acronyms = re.findall(r"\b[A-Z]{2,}\b", question)
+    keywords = re.findall(r"\b[a-z]{4,}\b", q)
+
+    entities = set(a.lower() for a in acronyms)
+    entities.update(keywords)
+
+    return list(entities)
+
+
+def _get_llm():
+    from processing.llm import get_llm
+    return get_llm()
