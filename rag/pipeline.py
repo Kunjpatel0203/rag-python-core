@@ -246,43 +246,319 @@
 
 
 
-##############################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ##############################
+# import os
+
+# # Loaders
+# from loaders.url_loader import load_url
+# from loaders.file_loader import download_file
+# from loaders.url_loader_browser import load_url_with_browser
+
+# # Extractors
+# from extractors.universal_extractor import extract_text
+# from extractors.excel_metadata_extractor import extract_excel_metadata
+
+# # Processing
+# from processing.chunker import chunk_text
+# from processing.embedder import get_embedder
+# from processing.llm import get_llm
+
+# # Vector store
+# from vectorstore.faiss_store import create_vector_store, load_vector_store
+
+# # Prompt
+# from rag.prompt import build_prompt
+
+# # Structured storage
+# from structured.store import save_structured_file
+
+
+# # =============================
+# # CONFIG
+# # =============================
+# USE_BROWSER = True
+# BASE_CHUNK_DIR = "data/chunks"
+# BASE_EMBED_DIR = "data/embeddings"
+
+
+# # =============================
+# # Save chunks to disk
+# # =============================
+# def save_chunks(compliance_id, block_id, source_name, chunks):
+#     os.makedirs(f"{BASE_CHUNK_DIR}/compliance_{compliance_id}", exist_ok=True)
+
+#     file_path = (
+#         f"{BASE_CHUNK_DIR}/compliance_{compliance_id}/"
+#         f"block_{block_id}_{source_name}.txt"
+#     )
+
+#     with open(file_path, "w", encoding="utf-8") as f:
+#         f.write(f"COMPLIANCE ID: {compliance_id}\n")
+#         f.write(f"BLOCK ID: {block_id}\n")
+#         f.write(f"SOURCE: {source_name}\n")
+#         f.write("=" * 50 + "\n\n")
+
+#         for i, chunk in enumerate(chunks, 1):
+#             f.write(f"[CHUNK {i}]\n{chunk}\n\n")
+
+
+# # =============================
+# # INGESTION
+# # =============================
+# def ingest_blocks(blocks, compliance_id):
+#     embed_path = f"{BASE_EMBED_DIR}/compliance_{compliance_id}"
+
+#     # Reuse embeddings if present
+#     if os.path.exists(f"{embed_path}/index.faiss"):
+#         print("✔ Loading existing embeddings (no OpenAI cost)")
+#         return load_vector_store(embed_path)
+
+#     print("⏳ Creating embeddings...")
+
+#     all_chunks = []
+#     all_metadata = []
+
+#     for block in blocks:
+#         if not block.get("type"):
+#             continue
+
+#         block_type = block["type"].upper()
+#         block_id = block["block_id"]
+#         value = block["value"]
+
+#         # ========================================
+#         # STRUCTURED FILES (EXCEL / CSV / GSHEET)
+#         # ========================================
+#         if block_type in ["XLS", "XLSX", "CSV", "GSHEET"]:
+#             # Save structured copy for Phase-2 NLQ
+#             save_structured_file(block, compliance_id)
+
+#             # Extract metadata text for RAG
+#             try:
+#                 metadata_text = extract_excel_metadata(value)
+#             except Exception as e:
+#                 print("[EXCEL METADATA ERROR]", e)
+#                 continue
+
+#             if metadata_text.strip():
+#                 meta_chunks = chunk_text(metadata_text)
+#                 source_name = os.path.basename(value).replace(".", "_") + "_metadata"
+
+#                 save_chunks(compliance_id, block_id, source_name, meta_chunks)
+
+#                 for c in meta_chunks:
+#                     all_chunks.append(c)
+#                     all_metadata.append({
+#                         "compliance_id": compliance_id,
+#                         "block_id": block_id,
+#                         "source": value,
+#                         "type": "excel_metadata"
+#                     })
+
+#             continue
+
+#         # ========================================
+#         # URL INGESTION
+#         # ========================================
+#         if block_type == "URL":
+#             if USE_BROWSER:
+#                 page_text, downloaded_docs = load_url_with_browser(value)
+#             else:
+#                 page_text, downloaded_docs = load_url(value)
+
+#             # Page text
+#             page_chunks = chunk_text(page_text)
+#             save_chunks(compliance_id, block_id, "url_page", page_chunks)
+
+#             for c in page_chunks:
+#                 all_chunks.append(c)
+#                 all_metadata.append({
+#                     "compliance_id": compliance_id,
+#                     "block_id": block_id,
+#                     "source": value,
+#                     "type": "url_page"
+#                 })
+
+#             # Downloaded documents from URL
+#             for path in downloaded_docs:
+#                 try:
+#                     text = extract_text(path)
+#                 except Exception as e:
+#                     print("[DOC EXTRACT ERROR]", e)
+#                     continue
+
+#                 doc_chunks = chunk_text(text)
+#                 name = os.path.basename(path).replace(".", "_")
+
+#                 save_chunks(compliance_id, block_id, name, doc_chunks)
+
+#                 for c in doc_chunks:
+#                     all_chunks.append(c)
+#                     all_metadata.append({
+#                         "compliance_id": compliance_id,
+#                         "block_id": block_id,
+#                         "source": path,
+#                         "type": "url_document"
+#                     })
+
+#             continue
+
+#         # ========================================
+#         # FILE INGESTION (PDF / DOC / PPT)
+#         # ========================================
+#         try:
+#             text = extract_text(value)
+#         except Exception as e:
+#             print("[FILE EXTRACT ERROR]", e)
+#             continue
+
+#         chunks = chunk_text(text)
+#         name = os.path.basename(value).replace(".", "_")
+
+#         save_chunks(compliance_id, block_id, name, chunks)
+
+#         for c in chunks:
+#             all_chunks.append(c)
+#             all_metadata.append({
+#                 "compliance_id": compliance_id,
+#                 "block_id": block_id,
+#                 "source": value,
+#                 "type": "unstructured"
+#             })
+
+#     # ========================================
+#     # Create Vector Store
+#     # ========================================
+#     if not all_chunks:
+#         print("ℹ No RAG content found.")
+#         return None
+
+#     embedder = get_embedder()
+#     store = create_vector_store(all_chunks, all_metadata, embedder)
+
+#     os.makedirs(embed_path, exist_ok=True)
+#     store.save_local(embed_path)
+
+#     print("✅ Embeddings saved locally")
+#     return store
+
+
+# # =============================
+# # QUERY
+# # =============================
+# def query_blocks(store, question, compliance_id):
+#     if store is None:
+#         return "No unstructured documents available."
+
+#     docs = store.similarity_search(
+#         question,
+#         k=5,
+#         filter={"compliance_id": compliance_id}
+#     )
+
+#     if not docs:
+#         return "Not found in provided documents."
+
+#     context = "\n".join(d.page_content for d in docs)
+
+#     prompt = build_prompt(context, question)
+#     llm = get_llm()
+
+#     answer = llm.invoke(prompt).content.strip()
+#     return answer if answer else "Not found in provided documents."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 
-# Loaders
+# ===== Existing loaders =====
 from loaders.url_loader import load_url
 from loaders.file_loader import download_file
 from loaders.url_loader_browser import load_url_with_browser
 
-# Extractors
 from extractors.universal_extractor import extract_text
-from extractors.excel_metadata_extractor import extract_excel_metadata
 
-# Processing
 from processing.chunker import chunk_text
 from processing.embedder import get_embedder
 from processing.llm import get_llm
 
-# Vector store
 from vectorstore.faiss_store import create_vector_store, load_vector_store
-
-# Prompt
 from rag.prompt import build_prompt
 
-# Structured storage
 from structured.store import save_structured_file
+
+# ✅ NEW IMPORTS
+from extractors.excel_semantic_extractor import excel_semantic_extractor
+from processing.numeric_aggregator import numeric_aggregate
 
 
 # =============================
 # CONFIG
 # =============================
 USE_BROWSER = True
+
 BASE_CHUNK_DIR = "data/chunks"
 BASE_EMBED_DIR = "data/embeddings"
 
 
 # =============================
-# Save chunks to disk
+# Save Chunks
 # =============================
 def save_chunks(compliance_id, block_id, source_name, chunks):
     os.makedirs(f"{BASE_CHUNK_DIR}/compliance_{compliance_id}", exist_ok=True)
@@ -293,22 +569,17 @@ def save_chunks(compliance_id, block_id, source_name, chunks):
     )
 
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write(f"COMPLIANCE ID: {compliance_id}\n")
-        f.write(f"BLOCK ID: {block_id}\n")
-        f.write(f"SOURCE: {source_name}\n")
-        f.write("=" * 50 + "\n\n")
-
         for i, chunk in enumerate(chunks, 1):
             f.write(f"[CHUNK {i}]\n{chunk}\n\n")
 
 
 # =============================
-# INGESTION
+# INGEST BLOCKS
 # =============================
 def ingest_blocks(blocks, compliance_id):
     embed_path = f"{BASE_EMBED_DIR}/compliance_{compliance_id}"
 
-    # Reuse embeddings if present
+    # Reuse embeddings if already exist
     if os.path.exists(f"{embed_path}/index.faiss"):
         print("✔ Loading existing embeddings (no OpenAI cost)")
         return load_vector_store(embed_path)
@@ -326,47 +597,42 @@ def ingest_blocks(blocks, compliance_id):
         block_id = block["block_id"]
         value = block["value"]
 
-        # ========================================
-        # STRUCTURED FILES (EXCEL / CSV / GSHEET)
-        # ========================================
+        # ==================================================
+        # 📊 EXCEL / CSV / GSHEET → SEMANTIC ROW EXTRACTION
+        # ==================================================
         if block_type in ["XLS", "XLSX", "CSV", "GSHEET"]:
-            # Save structured copy for Phase-2 NLQ
+
+            # Save original file
             save_structured_file(block, compliance_id)
 
-            # Extract metadata text for RAG
-            try:
-                metadata_text = extract_excel_metadata(value)
-            except Exception as e:
-                print("[EXCEL METADATA ERROR]", e)
-                continue
+            # 🔹 Extract semantic row chunks
+            row_chunks, row_metadata = excel_semantic_extractor(value)
 
-            if metadata_text.strip():
-                meta_chunks = chunk_text(metadata_text)
-                source_name = os.path.basename(value).replace(".", "_") + "_metadata"
+            # Save chunk text (debug)
+            save_chunks(compliance_id, block_id, "excel_rows", row_chunks)
 
-                save_chunks(compliance_id, block_id, source_name, meta_chunks)
-
-                for c in meta_chunks:
-                    all_chunks.append(c)
-                    all_metadata.append({
-                        "compliance_id": compliance_id,
-                        "block_id": block_id,
-                        "source": value,
-                        "type": "excel_metadata"
-                    })
+            # Add into vector store
+            for chunk, meta in zip(row_chunks, row_metadata):
+                all_chunks.append(chunk)
+                all_metadata.append({
+                    "compliance_id": compliance_id,
+                    "block_id": block_id,
+                    "source": value,
+                    "type": "excel_row",
+                    "numeric": meta["numeric"]
+                })
 
             continue
 
-        # ========================================
-        # URL INGESTION
-        # ========================================
+        # ==================================================
+        # 🌐 URL INGESTION
+        # ==================================================
         if block_type == "URL":
             if USE_BROWSER:
                 page_text, downloaded_docs = load_url_with_browser(value)
             else:
                 page_text, downloaded_docs = load_url(value)
 
-            # Page text
             page_chunks = chunk_text(page_text)
             save_chunks(compliance_id, block_id, "url_page", page_chunks)
 
@@ -379,7 +645,6 @@ def ingest_blocks(blocks, compliance_id):
                     "type": "url_page"
                 })
 
-            # Downloaded documents from URL
             for path in downloaded_docs:
                 try:
                     text = extract_text(path)
@@ -403,9 +668,9 @@ def ingest_blocks(blocks, compliance_id):
 
             continue
 
-        # ========================================
-        # FILE INGESTION (PDF / DOC / PPT)
-        # ========================================
+        # ==================================================
+        # 📄 PDF / DOC / PPT
+        # ==================================================
         try:
             text = extract_text(value)
         except Exception as e:
@@ -414,7 +679,6 @@ def ingest_blocks(blocks, compliance_id):
 
         chunks = chunk_text(text)
         name = os.path.basename(value).replace(".", "_")
-
         save_chunks(compliance_id, block_id, name, chunks)
 
         for c in chunks:
@@ -426,11 +690,11 @@ def ingest_blocks(blocks, compliance_id):
                 "type": "unstructured"
             })
 
-    # ========================================
-    # Create Vector Store
-    # ========================================
+    # ==================================================
+    # CREATE VECTOR STORE
+    # ==================================================
     if not all_chunks:
-        print("ℹ No RAG content found.")
+        print("No content found.")
         return None
 
     embedder = get_embedder()
@@ -444,18 +708,43 @@ def ingest_blocks(blocks, compliance_id):
 
 
 # =============================
-# QUERY
+# QUERY BLOCKS (HYBRID RAG)
 # =============================
 def query_blocks(store, question, compliance_id):
     if store is None:
-        return "No unstructured documents available."
+        return "No documents available."
 
     docs = store.similarity_search(
         question,
-        k=5,
+        k=12,
         filter={"compliance_id": compliance_id}
     )
 
+    retrieved_metadata = [d.metadata for d in docs] if docs else []
+
+    # ==================================================
+    # 🔹 ALWAYS TRY NUMERIC AGGREGATION FIRST
+    # ==================================================
+    structured_path = f"data/structured/compliance_{compliance_id}"
+    excel_files = [f for f in os.listdir(structured_path) if f.endswith(".xlsx")]
+
+    structured_excel_path = (
+        os.path.join(structured_path, excel_files[0])
+        if excel_files else None
+    )
+
+    numeric_answer = numeric_aggregate(
+        retrieved_metadata,
+        question,
+        structured_excel_path
+    )
+
+    if numeric_answer:
+        return numeric_answer
+
+    # ==================================================
+    # 🔹 IF NOT NUMERIC → NORMAL RAG
+    # ==================================================
     if not docs:
         return "Not found in provided documents."
 
@@ -465,15 +754,27 @@ def query_blocks(store, question, compliance_id):
     llm = get_llm()
 
     answer = llm.invoke(prompt).content.strip()
-    return answer if answer else "Not found in provided documents."
+
+    return answer if answer else "Not found."
 
 
 
 
 
+    if numeric_answer:
+        return numeric_answer
 
+    # ==================================================
+    # 🔹 NORMAL RAG ANSWER
+    # ==================================================
+    context = "\n".join(d.page_content for d in docs)
 
+    prompt = build_prompt(context, question)
+    llm = get_llm()
 
+    answer = llm.invoke(prompt).content.strip()
+
+    return answer if answer else "Not found."
 
 
 
