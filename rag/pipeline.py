@@ -557,6 +557,73 @@ BASE_CHUNK_DIR = "data/chunks"
 BASE_EMBED_DIR = "data/embeddings"
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### intent aware rewriting 
+
+
+
+def rewrite_query_for_retrieval(question: str, llm) -> str:
+    """
+    Rewrite the user question into multiple semantically equivalent
+    search-style queries to improve document retrieval.
+    This is retrieval-focused, NOT answering-focused.
+    """
+
+    prompt = f"""
+You are helping a search engine retrieve documents.
+
+Rewrite the user question into 2-3 alternative search queries
+that might match how the same information is written in documents.
+
+Do NOT answer the question.
+Do NOT add new facts.
+Only rewrite for retrieval.
+
+User question:
+{question}
+
+Return the rewritten queries in one line.
+"""
+
+    rewritten = llm.invoke(prompt).content.strip()
+
+    # Combine original + rewritten for broader semantic match
+    return question + " " + rewritten
+
+#### intent aware rewriting 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # =============================
 # Save Chunks
 # =============================
@@ -713,6 +780,10 @@ def ingest_blocks(blocks, compliance_id):
 def query_blocks(store, question, compliance_id):
     if store is None:
         return "No documents available."
+
+    llm = get_llm()
+    
+    rewritten_query = rewrite_query_for_retrieval(question, llm)
 
     docs = store.similarity_search(
         question,
