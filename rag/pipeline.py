@@ -572,7 +572,7 @@ BASE_EMBED_DIR = "data/embeddings"
 
 
 
-#### intent aware rewriting 
+#### intent aware rewriting  start
 
 
 
@@ -604,12 +604,41 @@ Return the rewritten queries in one line.
     # Combine original + rewritten for broader semantic match
     return question + " " + rewritten
 
-#### intent aware rewriting 
+#### intent aware rewriting end
 
 
+#### rerank start
+def rerank_documents(question: str, docs: list, llm, top_n: int = 6):
+    """
+    LLM-based reranking of retrieved documents.
+    Improves precision without changing ingestion or embeddings.
+    """
+    scored = []
 
+    for doc in docs:
+        prompt = f"""
+Rate how well the following passage answers the question.
 
+Question:
+{question}
 
+Passage:
+{doc.page_content}
+
+Score relevance from 0 to 10.
+Return ONLY the number.
+"""
+        try:
+            score = float(llm.invoke(prompt).content.strip())
+        except:
+            score = 0.0
+
+        scored.append((score, doc))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [doc for _, doc in scored[:top_n]]
+
+#### rerank end
 
 
 
@@ -775,26 +804,91 @@ def ingest_blocks(blocks, compliance_id):
 
 
 # =============================
-# QUERY BLOCKS (HYBRID RAG)
+# QUERY BLOCKS (HYBRID RAG) 1)
 # =============================
+# def query_blocks(store, question, compliance_id):
+#     if store is None:
+#         return "No documents available."
+
+
+
+#     #### intent aware rewriting start
+#     llm = get_llm()
+    
+#     rewritten_query = rewrite_query_for_retrieval(question, llm)
+#     #### intent aware rewriting end
+
+
+
+
+#     docs = store.similarity_search(
+#         question,
+#         k=12,
+#         filter={"compliance_id": compliance_id}
+#     )
+
+#     retrieved_metadata = [d.metadata for d in docs] if docs else []
+
+#     # ==================================================
+#     # 🔹 ALWAYS TRY NUMERIC AGGREGATION FIRST
+#     # ==================================================
+#     structured_path = f"data/structured/compliance_{compliance_id}"
+#     excel_files = [f for f in os.listdir(structured_path) if f.endswith(".xlsx")]
+
+#     structured_excel_path = (
+#         os.path.join(structured_path, excel_files[0])
+#         if excel_files else None
+#     )
+
+#     numeric_answer = numeric_aggregate(
+#         retrieved_metadata,
+#         question,
+#         structured_excel_path
+#     )
+
+#     if numeric_answer:
+#         return numeric_answer
+
+#     # ==================================================
+#     # 🔹 IF NOT NUMERIC → NORMAL RAG
+#     # ==================================================
+#     if not docs:
+#         return "Not found in provided documents."
+
+#     context = "\n".join(d.page_content for d in docs)
+
+#     prompt = build_prompt(context, question)
+#     llm = get_llm()
+
+#     answer = llm.invoke(prompt).content.strip()
+
+#     return answer if answer else "Not found."
+
+
 def query_blocks(store, question, compliance_id):
     if store is None:
         return "No documents available."
 
     llm = get_llm()
-    
+
+    # ==================================================
+    # 🔹 INTENT-AWARE QUERY REWRITING
+    # ==================================================
     rewritten_query = rewrite_query_for_retrieval(question, llm)
 
+    # ==================================================
+    # 🔹 BROAD RETRIEVAL (TOP-20)
+    # ==================================================
     docs = store.similarity_search(
-        question,
-        k=12,
+        rewritten_query,   # ✅ FIX: use rewritten query
+        k=20,
         filter={"compliance_id": compliance_id}
     )
 
     retrieved_metadata = [d.metadata for d in docs] if docs else []
 
     # ==================================================
-    # 🔹 ALWAYS TRY NUMERIC AGGREGATION FIRST
+    # 🔹 ALWAYS TRY NUMERIC AGGREGATION FIRST (EXCEL SAFE)
     # ==================================================
     structured_path = f"data/structured/compliance_{compliance_id}"
     excel_files = [f for f in os.listdir(structured_path) if f.endswith(".xlsx")]
@@ -814,16 +908,19 @@ def query_blocks(store, question, compliance_id):
         return numeric_answer
 
     # ==================================================
-    # 🔹 IF NOT NUMERIC → NORMAL RAG
+    # 🔹 RERANK FOR PRECISION
     # ==================================================
     if not docs:
         return "Not found in provided documents."
 
+    docs = rerank_documents(question, docs, llm, top_n=6)
+
+    # ==================================================
+    # 🔹 FINAL ANSWER GENERATION
+    # ==================================================
     context = "\n".join(d.page_content for d in docs)
 
     prompt = build_prompt(context, question)
-    llm = get_llm()
-
     answer = llm.invoke(prompt).content.strip()
 
     return answer if answer else "Not found."
@@ -831,21 +928,20 @@ def query_blocks(store, question, compliance_id):
 
 
 
+    # if numeric_answer:
+    #     return numeric_answer
 
-    if numeric_answer:
-        return numeric_answer
+    # # ==================================================
+    # # 🔹 NORMAL RAG ANSWER
+    # # ==================================================
+    # context = "\n".join(d.page_content for d in docs)
 
-    # ==================================================
-    # 🔹 NORMAL RAG ANSWER
-    # ==================================================
-    context = "\n".join(d.page_content for d in docs)
+    # prompt = build_prompt(context, question)
+    # llm = get_llm()
 
-    prompt = build_prompt(context, question)
-    llm = get_llm()
+    # answer = llm.invoke(prompt).content.strip()
 
-    answer = llm.invoke(prompt).content.strip()
-
-    return answer if answer else "Not found."
+    # return answer if answer else "Not found."
 
 
 
