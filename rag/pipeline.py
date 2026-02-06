@@ -546,6 +546,8 @@ from structured.store import save_structured_file
 # ✅ NEW IMPORTS
 from extractors.excel_semantic_extractor import excel_semantic_extractor
 from processing.numeric_aggregator import numeric_aggregate
+from processing.hybrid_retriever import load_all_chunks, bm25_search
+
 
 
 # =============================
@@ -865,33 +867,116 @@ def ingest_blocks(blocks, compliance_id):
 #     return answer if answer else "Not found."
 
 
+
+
+
+
+# =============================
+# QUERY BLOCKS (HYBRID RAG) 2)
+# =============================
+# def query_blocks(store, question, compliance_id):
+#     if store is None:
+#         return "No documents available."
+
+#     llm = get_llm()
+
+#     # ==================================================
+#     # 🔹 INTENT-AWARE QUERY REWRITING
+#     # ==================================================
+#     rewritten_query = rewrite_query_for_retrieval(question, llm)
+
+#     # ==================================================
+#     # 🔹 BROAD RETRIEVAL (TOP-20)
+#     # ==================================================
+#     docs = store.similarity_search(
+#         rewritten_query,   # ✅ FIX: use rewritten query
+#         k=20,
+#         filter={"compliance_id": compliance_id}
+#     )
+
+#     retrieved_metadata = [d.metadata for d in docs] if docs else []
+
+#     # ==================================================
+#     # 🔹 ALWAYS TRY NUMERIC AGGREGATION FIRST (EXCEL SAFE)
+#     # ==================================================
+#     structured_path = f"data/structured/compliance_{compliance_id}"
+#     excel_files = [f for f in os.listdir(structured_path) if f.endswith(".xlsx")]
+
+#     structured_excel_path = (
+#         os.path.join(structured_path, excel_files[0])
+#         if excel_files else None
+#     )
+
+#     numeric_answer = numeric_aggregate(
+#         retrieved_metadata,
+#         question,
+#         structured_excel_path
+#     )
+
+#     if numeric_answer:
+#         return numeric_answer
+
+#     # ==================================================
+#     # 🔹 RERANK FOR PRECISION
+#     # ==================================================
+#     if not docs:
+#         return "Not found in provided documents."
+
+#     docs = rerank_documents(question, docs, llm, top_n=6)
+
+#     # ==================================================
+#     # 🔹 FINAL ANSWER GENERATION
+#     # ==================================================
+#     context = "\n".join(d.page_content for d in docs)
+
+#     prompt = build_prompt(context, question)
+#     answer = llm.invoke(prompt).content.strip()
+
+#     return answer if answer else "Not found."
+
+
+
 def query_blocks(store, question, compliance_id):
     if store is None:
         return "No documents available."
 
     llm = get_llm()
 
-    # ==================================================
-    # 🔹 INTENT-AWARE QUERY REWRITING
-    # ==================================================
+    # ---------- INTENT REWRITE ----------
     rewritten_query = rewrite_query_for_retrieval(question, llm)
 
-    # ==================================================
-    # 🔹 BROAD RETRIEVAL (TOP-20)
-    # ==================================================
-    docs = store.similarity_search(
-        rewritten_query,   # ✅ FIX: use rewritten query
-        k=20,
+    # ---------- DENSE SEARCH ----------
+    dense_docs = store.similarity_search(
+        rewritten_query,
+        k=15,
         filter={"compliance_id": compliance_id}
     )
 
-    retrieved_metadata = [d.metadata for d in docs] if docs else []
+    # ---------- SPARSE SEARCH ----------
+    chunk_dir = f"data/chunks/compliance_{compliance_id}"
+    keyword_chunks = []
 
-    # ==================================================
-    # 🔹 ALWAYS TRY NUMERIC AGGREGATION FIRST (EXCEL SAFE)
-    # ==================================================
+    if os.path.exists(chunk_dir):
+        all_chunks = load_all_chunks(chunk_dir)
+        keyword_chunks = bm25_search(rewritten_query, all_chunks, k=10)
+
+    class TempDoc:
+        def __init__(self, text):
+            self.page_content = text
+            self.metadata = {"type": "keyword"}
+
+    sparse_docs = [TempDoc(c) for c in keyword_chunks]
+
+    # ---------- MERGE ----------
+    docs = dense_docs + sparse_docs
+
+    # ---------- NUMERIC (ONLY DENSE DOCS) ----------
+    retrieved_metadata = [d.metadata for d in dense_docs] if dense_docs else []
+
     structured_path = f"data/structured/compliance_{compliance_id}"
-    excel_files = [f for f in os.listdir(structured_path) if f.endswith(".xlsx")]
+    excel_files = []
+    if os.path.exists(structured_path):
+        excel_files = [f for f in os.listdir(structured_path) if f.endswith(".xlsx")]
 
     structured_excel_path = (
         os.path.join(structured_path, excel_files[0])
@@ -907,23 +992,28 @@ def query_blocks(store, question, compliance_id):
     if numeric_answer:
         return numeric_answer
 
-    # ==================================================
-    # 🔹 RERANK FOR PRECISION
-    # ==================================================
+    # ---------- REMOVE DUPLICATES ----------
+    unique = {}
+    for d in docs:
+        unique[d.page_content[:500]] = d
+    docs = list(unique.values())
+
     if not docs:
         return "Not found in provided documents."
 
+    # ---------- RERANK ----------
     docs = rerank_documents(question, docs, llm, top_n=6)
 
-    # ==================================================
-    # 🔹 FINAL ANSWER GENERATION
-    # ==================================================
+    # ---------- FINAL ANSWER ----------
     context = "\n".join(d.page_content for d in docs)
 
     prompt = build_prompt(context, question)
     answer = llm.invoke(prompt).content.strip()
 
     return answer if answer else "Not found."
+
+
+
 
 
 
